@@ -1,0 +1,18 @@
+name: ava
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - openssl
+  - ca-certificates
+  - pip:
+    - fastapi==0.115.0
+    - uvicorn==0.32.0
+    - mangum==0.17.0
+    - python-telegram-bot==21.6
+    - langgraph==0.2.34
+    - langchain-openai==0.2.0
+    - psycopg[binary,pool]==3.2.1
+    - pydantic-settings==2.5.0

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ava"
+version = "0.1.0"
+description = "Ava – agentic persistent memory Telegram bot"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Your Name" }
+]
+dependencies = []
+
+[project.scripts]
+ava = "ava.main:main"
