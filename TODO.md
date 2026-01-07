@@ -9,15 +9,15 @@ High-level goal: Build **Ava**, an agentic persistent-memory Telegram bot that h
 - [x] Configure environment variable handling (API keys, DB URL, etc.)
 
 ## Phase 2 – Core infrastructure
-- [ ] Provision Postgres database
-- [ ] Enable PGVector extension in Postgres
-- [ ] Create migrations for core tables:
-  - [ ] Users
-  - [ ] Goals
-  - [ ] Reminders
-  - [ ] Memories (with vector embeddings column)
-  - [ ] Events / calendar links
-- [ ] Implement database access layer (queries, repositories, or ORM models)
+- [x] Provision Postgres database (configure DATABASE_URL)
+- [x] Enable PGVector extension in Postgres (via init_db/ava-migrate)
+- [x] Create migrations for core tables (via SQLAlchemy models):
+  - [x] Users
+  - [x] Goals
+  - [x] Reminders
+  - [x] Memories (with vector embeddings column)
+  - [x] Events / calendar links
+- [x] Implement database access layer (SQLAlchemy ORM models and session helpers)
 
 ## Phase 3 – Telegram bot
 - [ ] Register Telegram bot and obtain bot token
