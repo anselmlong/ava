@@ -18,6 +18,7 @@ engine = create_async_engine(
     max_overflow=settings.database_max_overflow,
     pool_timeout=settings.database_pool_timeout,
     echo=settings.debug,
+    hide_parameters=True,
 )
 
 # Create session factory

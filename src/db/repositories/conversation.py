@@ -222,3 +222,23 @@ class ConversationRepository:
             )
         )
         return int(result.scalar_one())
+
+    async def set_context(self, *, conversation_id: int, context: dict) -> None:
+        """Replace the conversation context JSON."""
+        conversation = await self.get_by_id(conversation_id)
+        if not conversation:
+            return
+        conversation.context = context
+
+    async def clear_pending_action(self, *, conversation_id: int) -> None:
+        """Remove any pending_action from conversation context."""
+        conversation = await self.get_by_id(conversation_id)
+        if not conversation:
+            return
+
+        existing = dict(conversation.context or {})
+        if "pending_action" not in existing:
+            return
+
+        existing.pop("pending_action", None)
+        conversation.context = existing

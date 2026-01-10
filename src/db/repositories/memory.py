@@ -98,16 +98,17 @@ class MemoryRepository:
         Returns:
             List of tuples containing (MemoryEmbedding, similarity_score)
         """
-        # Convert embedding to string format for pgvector
-        # Use format string to embed the vector directly since ::vector cast conflicts with :param syntax
+        # Convert embedding to string format for pgvector.
+        # Keep it parameterized to avoid logging or interpolating huge vectors.
         embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
-        # Build the query with cosine similarity
-        # 1 - cosine_distance gives us cosine similarity (0 to 1)
-        # Note: We embed the vector string directly to avoid conflicts with SQLAlchemy's :param syntax
+        # Build the query with cosine similarity.
+        # 1 - cosine_distance gives us cosine similarity (0 to 1).
+        # Use CAST(:embedding AS vector) to avoid the ::vector syntax ambiguity in SQLAlchemy text().
         if memory_types:
-            query = text(f"""
-                SELECT 
+            query = text(
+                """
+                SELECT
                     m.id,
                     m.user_id,
                     m.content,
@@ -124,25 +125,28 @@ class MemoryRepository:
                     m.created_at,
                     m.updated_at,
                     m.deleted_at,
-                    1 - (m.embedding <=> '{embedding_str}'::vector) as similarity
+                    1 - (m.embedding <=> CAST(:embedding AS vector)) as similarity
                 FROM memory_embeddings m
                 WHERE m.user_id = :user_id
                   AND m.deleted_at IS NULL
                   AND m.embedding IS NOT NULL
-                  AND 1 - (m.embedding <=> '{embedding_str}'::vector) >= :threshold
+                  AND 1 - (m.embedding <=> CAST(:embedding AS vector)) >= :threshold
                   AND m.memory_type = ANY(:memory_types)
                 ORDER BY similarity DESC
                 LIMIT :limit
-            """)
+                """
+            )
             params = {
                 "user_id": user_id,
+                "embedding": embedding_str,
                 "threshold": similarity_threshold,
                 "limit": limit,
                 "memory_types": memory_types,
             }
         else:
-            query = text(f"""
-                SELECT 
+            query = text(
+                """
+                SELECT
                     m.id,
                     m.user_id,
                     m.content,
@@ -159,17 +163,19 @@ class MemoryRepository:
                     m.created_at,
                     m.updated_at,
                     m.deleted_at,
-                    1 - (m.embedding <=> '{embedding_str}'::vector) as similarity
+                    1 - (m.embedding <=> CAST(:embedding AS vector)) as similarity
                 FROM memory_embeddings m
                 WHERE m.user_id = :user_id
                   AND m.deleted_at IS NULL
                   AND m.embedding IS NOT NULL
-                  AND 1 - (m.embedding <=> '{embedding_str}'::vector) >= :threshold
+                  AND 1 - (m.embedding <=> CAST(:embedding AS vector)) >= :threshold
                 ORDER BY similarity DESC
                 LIMIT :limit
-            """)
+                """
+            )
             params = {
                 "user_id": user_id,
+                "embedding": embedding_str,
                 "threshold": similarity_threshold,
                 "limit": limit,
             }

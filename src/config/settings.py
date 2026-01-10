@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-004"
     embedding_dimension: int = 768  # text-embedding-004 produces 768-dim vectors
 
+    # Agent
+    langgraph_agent_enabled: bool = False
+
     # Memory System
     memory_read_enabled: bool = True
     memory_write_enabled: bool = True

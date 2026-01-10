@@ -2,12 +2,54 @@
 
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
+import hashlib
 import structlog
-from structlog.types import Processor
+from structlog.types import EventDict, Processor
 
 from src.config.settings import settings
+
+
+def _looks_like_vector(value: object) -> bool:
+    if not isinstance(value, (list, tuple)):
+        return False
+    if len(value) < 50:
+        return False
+    return all(isinstance(x, (int, float)) for x in value)
+
+
+def _summarize_vector(value: list[object] | tuple[object, ...]) -> dict[str, object]:
+    sample = list(value[:3])
+    raw = ",".join(str(x) for x in sample)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return {"_type": "vector", "len": len(value), "sample": sample, "sha": digest}
+
+
+def _sanitize_value(value: object) -> object:
+    if _looks_like_vector(value):
+        return _summarize_vector(value)  # type: ignore[arg-type]
+
+    if isinstance(value, dict):
+        return {k: _sanitize_value(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_value(v) for v in value]
+
+    if isinstance(value, str) and len(value) > 2000:
+        return value[:1999] + "…"
+
+    return value
+
+
+def sanitize_log_event(_: object, __: str, event_dict: EventDict) -> EventDict:
+    """Sanitize log events to avoid giant/sensitive payloads.
+
+    - Replaces large numeric vectors with a short summary
+    - Truncates very long strings
+    """
+
+    return cast(EventDict, {k: _sanitize_value(v) for k, v in event_dict.items()})
 
 
 def setup_logging() -> None:
@@ -21,6 +63,7 @@ def setup_logging() -> None:
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
+        sanitize_log_event,
         structlog.stdlib.ExtraAdder(),
     ]
 

@@ -1,5 +1,7 @@
 """SQLAlchemy database models."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Any
@@ -53,6 +55,22 @@ class AccessRequestStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class GoalStatus(str, Enum):
+    """Goal status."""
+
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    ARCHIVED = "archived"
+
+
+class ReminderScheduleType(str, Enum):
+    """Reminder schedule type."""
+
+    ONCE = "once"
+    DAILY = "daily"
+    WEEKLY = "weekly"
 
 
 class MemoryType(str, Enum):
@@ -114,6 +132,12 @@ class User(Base):
     # Relationships
     conversations: Mapped[List["Conversation"]] = relationship(
         "Conversation", back_populates="user", cascade="all, delete-orphan"
+    )
+    goals: Mapped[List["Goal"]] = relationship(
+        "Goal", back_populates="user", cascade="all, delete-orphan"
+    )
+    reminders: Mapped[List["Reminder"]] = relationship(
+        "Reminder", back_populates="user", cascade="all, delete-orphan"
     )
     approved_users: Mapped[List["User"]] = relationship(
         "User", back_populates="approver", foreign_keys=[approved_by]
@@ -277,6 +301,82 @@ class AccessRequest(Base):
 
     def __repr__(self) -> str:
         return f"<AccessRequest(id={self.id}, telegram_id={self.telegram_id}, status={self.status})>"
+
+
+class Goal(Base):
+    """Goal model for user goals."""
+
+    __tablename__ = "goals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(20), default=GoalStatus.ACTIVE.value, nullable=False, index=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="goals")
+    reminders: Mapped[List["Reminder"]] = relationship(
+        "Reminder",
+        back_populates="goal",
+        cascade="all",
+        passive_deletes=True,
+    )
+
+
+class Reminder(Base):
+    """Reminder model for scheduled user reminders."""
+
+    __tablename__ = "reminders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    goal_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("goals.id", ondelete="SET NULL"), index=True
+    )
+
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    schedule_text: Mapped[str] = mapped_column(Text, nullable=False)
+    schedule_type: Mapped[str] = mapped_column(
+        String(20), default=ReminderScheduleType.ONCE.value, nullable=False, index=True
+    )
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, index=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="reminders")
+    goal: Mapped[Optional["Goal"]] = relationship("Goal", back_populates="reminders")
+
+
+Index(
+    "idx_reminders_next_run_active",
+    Reminder.user_id,
+    Reminder.is_active,
+    Reminder.next_run_at,
+)
 
 
 class MemoryEmbedding(Base):

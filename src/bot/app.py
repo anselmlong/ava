@@ -9,6 +9,10 @@ from src.bot.handlers import (
     start_handler,
     help_handler,
     settings_handler,
+    goal_handler,
+    goals_handler,
+    remind_handler,
+    reminders_handler,
     message_handler,
     approve_handler,
     reject_handler,
@@ -52,6 +56,10 @@ def create_bot() -> Application:
     application.add_handler(start_handler)
     application.add_handler(help_handler)
     application.add_handler(settings_handler)
+    application.add_handler(goal_handler)
+    application.add_handler(goals_handler)
+    application.add_handler(remind_handler)
+    application.add_handler(reminders_handler)
 
     # Register admin handlers
     application.add_handler(approve_handler)

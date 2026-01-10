@@ -67,7 +67,11 @@ class EmbeddingService:
             )
             return result["embedding"]
         except Exception as e:
-            logger.error("Error generating query embedding", error=str(e), query=query)
+            logger.error(
+                "Error generating query embedding",
+                error=str(e),
+                query_length=len(query),
+            )
             raise
 
     async def embed_batch(

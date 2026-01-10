@@ -5,6 +5,7 @@ from telegram.ext import ContextTypes, CommandHandler
 
 from src.config.settings import settings
 from src.config.logging import get_logger
+from src.bot.markdown import reply_markdown, send_markdown
 from src.db import get_session
 from src.db.repositories.user import UserRepository
 from src.db.models import UserStatus
@@ -21,8 +22,9 @@ def admin_required(func):
 
         if not settings.is_admin(update.effective_user.id):
             if update.message:
-                await update.message.reply_text(
-                    "This command is only available to administrators."
+                await reply_markdown(
+                    update.message,
+                    "This command is only available to administrators.",
                 )
             return
 
@@ -37,16 +39,27 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not update.message or not update.effective_user:
         return
 
+    logger.info(
+        "Command received",
+        update_type="command",
+        command="/approve",
+        telegram_id=update.effective_user.id,
+    )
+
     if not context.args or len(context.args) < 1:
-        await update.message.reply_text(
-            "Usage: /approve <telegram_id>\n\nUse /pending to see pending requests."
+        await reply_markdown(
+            update.message,
+            "Usage: /approve <telegram_id>\n\nUse /pending to see pending requests.",
         )
         return
 
     try:
         target_telegram_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("Invalid Telegram ID. Please provide a number.")
+        await reply_markdown(
+            update.message,
+            "Invalid Telegram ID. Please provide a number.",
+        )
         return
 
     async with get_session() as session:
@@ -63,13 +76,17 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
         if not user:
-            await update.message.reply_text(
-                f"User with Telegram ID {target_telegram_id} not found."
+            await reply_markdown(
+                update.message,
+                f"User with Telegram ID {target_telegram_id} not found.",
             )
             return
 
         if user.status != UserStatus.APPROVED.value:
-            await update.message.reply_text(f"Failed to approve user {user.full_name}.")
+            await reply_markdown(
+                update.message,
+                f"Failed to approve user {user.full_name}.",
+            )
             return
 
         # Mark latest access request as approved (if present)
@@ -77,16 +94,18 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if request and request.is_pending:
             await repo.approve_access_request(request.id, reviewed_by=admin_id)
 
-        await update.message.reply_text(
+        await reply_markdown(
+            update.message,
             f"✅ User approved successfully!\n\n"
             f"Name: {user.full_name}\n"
             f"Username: @{user.username or 'N/A'}\n"
-            f"Telegram ID: {user.telegram_id}"
+            f"Telegram ID: {user.telegram_id}",
         )
 
         # Notify the user
         try:
-            await context.bot.send_message(
+            await send_markdown(
+                context.bot,
                 chat_id=target_telegram_id,
                 text="🎉 Your access request has been approved!\n\n"
                 "Welcome to Ava! You can now start chatting with me.\n"
@@ -114,17 +133,28 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not update.message or not update.effective_user:
         return
 
+    logger.info(
+        "Command received",
+        update_type="command",
+        command="/reject",
+        telegram_id=update.effective_user.id,
+    )
+
     if not context.args or len(context.args) < 1:
-        await update.message.reply_text(
+        await reply_markdown(
+            update.message,
             "Usage: /reject <telegram_id> [reason]\n\n"
-            "Use /pending to see pending requests."
+            "Use /pending to see pending requests.",
         )
         return
 
     try:
         target_telegram_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("Invalid Telegram ID. Please provide a number.")
+        await reply_markdown(
+            update.message,
+            "Invalid Telegram ID. Please provide a number.",
+        )
         return
 
     reason = " ".join(context.args[1:]) if len(context.args) > 1 else None
@@ -139,8 +169,9 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Get the user
         user = await repo.get_by_telegram_id(target_telegram_id)
         if not user:
-            await update.message.reply_text(
-                f"User with Telegram ID {target_telegram_id} not found."
+            await reply_markdown(
+                update.message,
+                f"User with Telegram ID {target_telegram_id} not found.",
             )
             return
 
@@ -156,12 +187,13 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 rejection_reason=reason,
             )
 
-        await update.message.reply_text(
+        await reply_markdown(
+            update.message,
             f"❌ User rejected.\n\n"
             f"Name: {user.full_name}\n"
             f"Username: @{user.username or 'N/A'}\n"
             f"Telegram ID: {user.telegram_id}"
-            + (f"\nReason: {reason}" if reason else "")
+            + (f"\nReason: {reason}" if reason else ""),
         )
 
         # Notify the user
@@ -169,7 +201,8 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             message = "Your access request has been reviewed and unfortunately cannot be approved at this time."
             if reason:
                 message += f"\n\nReason: {reason}"
-            await context.bot.send_message(
+            await send_markdown(
+                context.bot,
                 chat_id=target_telegram_id,
                 text=message,
             )
@@ -200,8 +233,15 @@ async def pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         pending_users = await repo.get_pending_users()
 
+        logger.info(
+            "Command received",
+            update_type="command",
+            command="/pending",
+            telegram_id=update.effective_user.id if update.effective_user else None,
+        )
+
         if not pending_users:
-            await update.message.reply_text("No pending access requests.")
+            await reply_markdown(update.message, "No pending access requests.")
             return
 
         text = f"📋 *Pending Access Requests* ({len(pending_users)})\n\n"
@@ -218,7 +258,7 @@ async def pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         text += "\nUse /approve <id> or /reject <id> to process"
 
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await reply_markdown(update.message, text)
 
 
 @admin_required
@@ -237,6 +277,13 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         total = pending_count + approved_count + suspended_count + banned_count
 
+        logger.info(
+            "Command received",
+            update_type="command",
+            command="/stats",
+            telegram_id=update.effective_user.id if update.effective_user else None,
+        )
+
         text = f"""
 📊 *System Statistics*
 
@@ -253,7 +300,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 • Rate Limit: {settings.rate_limit_messages_per_minute}/min
 """
 
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await reply_markdown(update.message, text)
 
 
 # Create handlers

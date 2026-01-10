@@ -8,6 +8,7 @@ from telegram.constants import ChatAction
 
 from src.config.settings import settings
 from src.config.logging import get_logger
+from src.bot.markdown import reply_markdown, send_markdown
 from src.db import get_session
 from src.db.repositories.user import UserRepository
 from src.db.repositories.conversation import ConversationRepository
@@ -96,8 +97,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     logger.info(
         "Message received",
+        update_type="message",
         telegram_id=telegram_user.id,
         message_length=len(message_text),
+        ava_route="langgraph" if settings.langgraph_agent_enabled else "direct",
     )
 
     async with get_session() as session:
@@ -109,21 +112,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if not user:
             # User not registered, prompt to /start
-            await update.message.reply_text(
-                "Please use /start to register before sending messages."
+            await reply_markdown(
+                update.message,
+                "Please use /start to register before sending messages.",
             )
             return
 
         # Check user status
         if user.status == UserStatus.PENDING.value:
-            await update.message.reply_text(
+            await reply_markdown(
+                update.message,
                 "Your access request is still pending approval. "
-                "Please wait for an administrator to review it."
+                "Please wait for an administrator to review it.",
             )
             return
         elif user.status == UserStatus.SUSPENDED.value:
-            await update.message.reply_text(
-                "Your account has been suspended. Please contact an administrator."
+            await reply_markdown(
+                update.message,
+                "Your account has been suspended. Please contact an administrator.",
             )
             return
         elif user.status == UserStatus.BANNED.value:
@@ -142,8 +148,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     since=window_start,
                 )
                 if recent_count >= settings.rate_limit_messages_per_minute:
-                    await update.message.reply_text(
-                        "You're sending messages too quickly. Please wait a moment and try again."
+                    await reply_markdown(
+                        update.message,
+                        "You're sending messages too quickly. Please wait a moment and try again.",
                     )
                     return
 
@@ -215,43 +222,70 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         error=str(e),
                     )
 
-            # Optional long-term memory retrieval
-            memory_context = ""
-            if settings.memory_read_enabled and memory_enabled_for_user:
-                try:
-                    memory_service = memory_service or MemoryService(session)
-                    recent_user_messages = [
-                        msg["content"] for msg in history if msg.get("role") == "user"
-                    ] + [message_text]
-                    memory_context = await memory_service.get_context_for_conversation(
-                        user_id=user.id,
-                        recent_messages=recent_user_messages,
-                        max_memories=settings.memory_retrieval_top_k,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "Memory retrieval failed",
-                        telegram_id=telegram_user.id,
-                        error=str(e),
-                    )
-                    memory_context = ""
+            response_text: str
+            decision_trace: list[str] = []
 
-            # Generate response using Gemini
-            gemini = get_gemini_service()
-            system_prompt = None
-            if memory_context:
-                system_prompt = (
-                    gemini.system_prompt
-                    + "\n\n"
-                    + memory_context
-                    + "\n\nUse the relevant memories only if they help answer the user. If they seem unrelated, ignore them."
+            if settings.langgraph_agent_enabled:
+                # Lazy import so the bot can still start without LangGraph installed.
+                from src.agent import run_agent_turn
+
+                decision_trace.append("route:langgraph")
+                response_text = await run_agent_turn(
+                    session=session,
+                    user_id=user.id,
+                    conversation_id=conversation.id,
+                    message_text=message_text,
+                    history=history,
+                    memory_enabled=memory_enabled_for_user,
                 )
+            else:
+                decision_trace.append("route:direct")
+                # Optional long-term memory retrieval
+                memory_context = ""
+                if settings.memory_read_enabled and memory_enabled_for_user:
+                    try:
+                        memory_service = memory_service or MemoryService(session)
+                        recent_user_messages = [
+                            msg["content"]
+                            for msg in history
+                            if msg.get("role") == "user"
+                        ] + [message_text]
+                        memory_context = (
+                            await memory_service.get_context_for_conversation(
+                                user_id=user.id,
+                                recent_messages=recent_user_messages,
+                                max_memories=settings.memory_retrieval_top_k,
+                            )
+                        )
+                        decision_trace.append(
+                            "memory:used" if memory_context else "memory:none"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Memory retrieval failed",
+                            telegram_id=telegram_user.id,
+                            error=str(e),
+                        )
+                        decision_trace.append("memory:error")
+                        memory_context = ""
 
-            response_text = await gemini.generate(
-                message=message_text,
-                history=history,
-                system_prompt=system_prompt,
-            )
+                # Generate response using Gemini
+                gemini = get_gemini_service()
+                system_prompt = None
+                if memory_context:
+                    system_prompt = (
+                        gemini.system_prompt
+                        + "\n\n"
+                        + memory_context
+                        + "\n\nUse the relevant memories only if they help answer the user. If they seem unrelated, ignore them."
+                    )
+
+                response_text = await gemini.generate(
+                    message=message_text,
+                    history=history,
+                    system_prompt=system_prompt,
+                )
+                decision_trace.append("llm:generated")
 
             # Send response (chunked to avoid Telegram "Message is too long")
             chunks = _split_text_for_telegram(response_text)
@@ -259,9 +293,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             for idx, chunk in enumerate(chunks):
                 if idx == 0:
-                    sent_message = await update.message.reply_text(chunk)
+                    sent_message = await reply_markdown(update.message, chunk)
                 else:
-                    sent_message = await context.bot.send_message(
+                    sent_message = await send_markdown(
+                        context.bot,
                         chat_id=chat_id,
                         text=chunk,
                     )
@@ -279,7 +314,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
 
             # Optional long-term memory writing
-            if settings.memory_write_enabled and memory_enabled_for_user:
+            if (
+                (not settings.langgraph_agent_enabled)
+                and settings.memory_write_enabled
+                and memory_enabled_for_user
+            ):
                 try:
                     memory_service = memory_service or MemoryService(session)
                     user_excerpt = _truncate_for_memory(message_text, 1500)
@@ -302,6 +341,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.info(
                 "Response sent",
                 telegram_id=telegram_user.id,
+                ava_route="langgraph" if settings.langgraph_agent_enabled else "direct",
+                ava_decision_trace=decision_trace,
                 response_length=len(response_text),
             )
 
@@ -311,9 +352,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 telegram_id=telegram_user.id,
                 error=str(e),
             )
-            await update.message.reply_text(
+            await reply_markdown(
+                update.message,
                 "I'm sorry, I encountered an error processing your message. "
-                "Please try again."
+                "Please try again.",
             )
 
 
