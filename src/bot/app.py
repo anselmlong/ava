@@ -36,6 +36,9 @@ async def post_shutdown(application: Application) -> None:
 
 def create_bot() -> Application:
     """Create and configure the Telegram bot application."""
+    if not settings.telegram_bot_token:
+        raise ValueError("TELEGRAM_BOT_TOKEN is required")
+
     # Build application
     application = (
         Application.builder()

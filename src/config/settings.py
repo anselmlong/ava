@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Telegram
-    telegram_bot_token: str = Field(..., description="Telegram Bot API token")
+    telegram_bot_token: str = Field(default="", description="Telegram Bot API token")
     telegram_admin_ids: str = Field(
         default="", description="Comma-separated list of admin Telegram user IDs"
     )
@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     embedding_dimension: int = 768  # text-embedding-004 produces 768-dim vectors
 
     # Memory System
+    memory_read_enabled: bool = True
+    memory_write_enabled: bool = True
     memory_retrieval_top_k: int = 5  # Number of memories to retrieve
     memory_similarity_threshold: float = 0.7  # Minimum similarity for retrieval
     memory_recency_weight: float = 0.1  # Weight for recency in scoring

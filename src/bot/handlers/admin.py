@@ -72,6 +72,11 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text(f"Failed to approve user {user.full_name}.")
             return
 
+        # Mark latest access request as approved (if present)
+        request = await repo.get_access_request_by_telegram_id(target_telegram_id)
+        if request and request.is_pending:
+            await repo.approve_access_request(request.id, reviewed_by=admin_id)
+
         await update.message.reply_text(
             f"✅ User approved successfully!\n\n"
             f"Name: {user.full_name}\n"
@@ -98,7 +103,8 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.info(
             "User approved",
             approved_telegram_id=target_telegram_id,
-            approved_by=update.effective_user.id,
+            admin_telegram_id=update.effective_user.id,
+            admin_user_id=admin_id,
         )
 
 
@@ -126,6 +132,10 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     async with get_session() as session:
         repo = UserRepository(session)
 
+        # Get admin user
+        admin_user = await repo.get_by_telegram_id(update.effective_user.id)
+        admin_id = admin_user.id if admin_user else None
+
         # Get the user
         user = await repo.get_by_telegram_id(target_telegram_id)
         if not user:
@@ -136,6 +146,15 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Ban the user (rejection = ban for now)
         await repo.ban(user.id)
+
+        # Mark latest access request as rejected (if present)
+        request = await repo.get_access_request_by_telegram_id(target_telegram_id)
+        if request and request.is_pending:
+            await repo.reject_access_request(
+                request.id,
+                reviewed_by=admin_id,
+                rejection_reason=reason,
+            )
 
         await update.message.reply_text(
             f"❌ User rejected.\n\n"
@@ -164,7 +183,8 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.info(
             "User rejected",
             rejected_telegram_id=target_telegram_id,
-            rejected_by=update.effective_user.id,
+            admin_telegram_id=update.effective_user.id,
+            admin_user_id=admin_id,
             reason=reason,
         )
 

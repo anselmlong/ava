@@ -1,5 +1,7 @@
 """Message handler for processing user messages."""
 
+from datetime import datetime, timezone, timedelta
+
 from telegram import Update
 from telegram.ext import ContextTypes, MessageHandler, filters
 from telegram.constants import ChatAction
@@ -9,8 +11,9 @@ from src.config.logging import get_logger
 from src.db import get_session
 from src.db.repositories.user import UserRepository
 from src.db.repositories.conversation import ConversationRepository
-from src.db.models import UserStatus
+from src.db.models import UserStatus, MessageRole
 from src.services.llm.gemini import get_gemini_service
+from src.services.memory import MemoryService
 
 logger = get_logger(__name__)
 
@@ -57,6 +60,29 @@ def _split_text_for_telegram(
         chunks.append(current)
 
     return chunks
+
+
+def _truncate_for_memory(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
+
+
+def _parse_iso_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+
+    try:
+        normalized = value
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -106,6 +132,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # User is approved, process message
         try:
+            now = datetime.now(timezone.utc)
+
+            # Rate limiting (per user)
+            if settings.rate_limit_enabled:
+                window_start = now - timedelta(minutes=1)
+                recent_count = await conv_repo.count_user_messages_since(
+                    user_id=user.id,
+                    since=window_start,
+                )
+                if recent_count >= settings.rate_limit_messages_per_minute:
+                    await update.message.reply_text(
+                        "You're sending messages too quickly. Please wait a moment and try again."
+                    )
+                    return
+
             # Show typing indicator
             await context.bot.send_chat_action(
                 chat_id=chat_id,
@@ -129,18 +170,87 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await user_repo.update_activity(user.id)
 
             # Get conversation history for context
+            history_since = None
+            if user.conversation_retention_days > 0:
+                history_since = now - timedelta(days=user.conversation_retention_days)
+
             history = await conv_repo.get_message_history_for_llm(
                 conversation_id=conversation.id,
                 limit=10,
+                since=history_since,
             )
             # Remove the last message (current one) from history
             history = history[:-1] if history else []
 
+            memory_enabled_for_user = user.conversation_retention_days > 0
+            memory_service: MemoryService | None = None
+
+            # Opportunistic memory retention cleanup (max once/day per user)
+            if settings.memory_write_enabled and memory_enabled_for_user:
+                try:
+                    last_cleanup_raw = (user.preferences or {}).get(
+                        "memory_last_cleanup_at"
+                    )
+                    last_cleanup = None
+                    if isinstance(last_cleanup_raw, str):
+                        last_cleanup = _parse_iso_datetime(last_cleanup_raw)
+
+                    should_cleanup = last_cleanup is None or (
+                        now - last_cleanup
+                    ) > timedelta(days=1)
+                    if should_cleanup:
+                        memory_service = MemoryService(session)
+                        await memory_service.delete_old_memories(
+                            user_id=user.id,
+                            retention_days=user.conversation_retention_days,
+                        )
+                        user.preferences = {
+                            **(user.preferences or {}),
+                            "memory_last_cleanup_at": now.isoformat(),
+                        }
+                except Exception as e:
+                    logger.warning(
+                        "Memory cleanup failed",
+                        telegram_id=telegram_user.id,
+                        error=str(e),
+                    )
+
+            # Optional long-term memory retrieval
+            memory_context = ""
+            if settings.memory_read_enabled and memory_enabled_for_user:
+                try:
+                    memory_service = memory_service or MemoryService(session)
+                    recent_user_messages = [
+                        msg["content"] for msg in history if msg.get("role") == "user"
+                    ] + [message_text]
+                    memory_context = await memory_service.get_context_for_conversation(
+                        user_id=user.id,
+                        recent_messages=recent_user_messages,
+                        max_memories=settings.memory_retrieval_top_k,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Memory retrieval failed",
+                        telegram_id=telegram_user.id,
+                        error=str(e),
+                    )
+                    memory_context = ""
+
             # Generate response using Gemini
             gemini = get_gemini_service()
+            system_prompt = None
+            if memory_context:
+                system_prompt = (
+                    gemini.system_prompt
+                    + "\n\n"
+                    + memory_context
+                    + "\n\nUse the relevant memories only if they help answer the user. If they seem unrelated, ignore them."
+                )
+
             response_text = await gemini.generate(
                 message=message_text,
                 history=history,
+                system_prompt=system_prompt,
             )
 
             # Send response (chunked to avoid Telegram "Message is too long")
@@ -159,7 +269,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # Save assistant response chunk
                 await conv_repo.add_message(
                     conversation_id=conversation.id,
-                    role="assistant",
+                    role=MessageRole.ASSISTANT.value,
                     content=chunk,
                     telegram_message_id=sent_message.message_id,
                     metadata={
@@ -167,6 +277,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         "chunk_total": total_chunks,
                     },
                 )
+
+            # Optional long-term memory writing
+            if settings.memory_write_enabled and memory_enabled_for_user:
+                try:
+                    memory_service = memory_service or MemoryService(session)
+                    user_excerpt = _truncate_for_memory(message_text, 1500)
+                    assistant_excerpt = _truncate_for_memory(response_text, 1500)
+                    conversation_text = (
+                        f"User: {user_excerpt}\nAssistant: {assistant_excerpt}"
+                    )
+                    await memory_service.extract_and_store_facts(
+                        user_id=user.id,
+                        conversation_text=conversation_text,
+                        conversation_id=conversation.id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Memory write failed",
+                        telegram_id=telegram_user.id,
+                        error=str(e),
+                    )
 
             logger.info(
                 "Response sent",

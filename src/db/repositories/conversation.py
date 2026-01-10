@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -106,13 +106,15 @@ class ConversationRepository:
         self,
         conversation_id: int,
         limit: int = 10,
+        since: Optional[datetime] = None,
     ) -> List[Message]:
         """Get recent messages from a conversation."""
+        query = select(Message).where(Message.conversation_id == conversation_id)
+        if since is not None:
+            query = query.where(Message.created_at >= since)
+
         result = await self.session.execute(
-            select(Message)
-            .where(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at.desc())
-            .limit(limit)
+            query.order_by(Message.created_at.desc()).limit(limit)
         )
         messages = list(result.scalars().all())
         # Return in chronological order
@@ -199,10 +201,24 @@ class ConversationRepository:
         self,
         conversation_id: int,
         limit: int = 10,
+        since: Optional[datetime] = None,
     ) -> List[dict]:
         """Get message history formatted for LLM context.
 
         Returns list of dicts with 'role' and 'content' keys.
         """
-        messages = await self.get_recent_messages(conversation_id, limit)
+        messages = await self.get_recent_messages(conversation_id, limit, since=since)
         return [{"role": msg.role, "content": msg.content} for msg in messages]
+
+    async def count_user_messages_since(self, user_id: int, since: datetime) -> int:
+        """Count user messages since a timestamp (for rate limiting)."""
+        result = await self.session.execute(
+            select(func.count(Message.id))
+            .join(Conversation, Message.conversation_id == Conversation.id)
+            .where(
+                Conversation.user_id == user_id,
+                Message.role == MessageRole.USER.value,
+                Message.created_at >= since,
+            )
+        )
+        return int(result.scalar_one())
