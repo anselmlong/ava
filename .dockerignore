@@ -1,0 +1,19 @@
+.git
+.gitignore
+.venv
+.uv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+ruff_cache
+htmlcov
+.env
+.env.*
+dist
+build
+*.egg-info
+
+# Local-only
+docker-compose.override.yml
+.opencode
