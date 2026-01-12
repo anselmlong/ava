@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,6 +12,7 @@ from src.db.repositories.goal import GoalRepository
 from src.db.repositories.reminder import ReminderRepository
 from src.db.repositories.user import UserRepository
 from src.services.reminders import ReminderService
+from src.services.reminder_delivery import deliver_due_reminders
 from src.services.nlp import ReminderExtraction, TimeFollowupExtraction
 
 
@@ -157,3 +158,81 @@ async def test_reminder_service_creates_from_followup_time(
     refreshed = await conv_repo.get_by_id(test_conversation.id)
     assert refreshed is not None
     assert "pending_action" not in (refreshed.context or {})
+
+
+async def test_deliver_due_once_reminder_deactivates(session):
+    user_repo = UserRepository(session)
+    user, _ = await user_repo.get_or_create(
+        telegram_id=999101,
+        username="reminder_once",
+        first_name="Reminder",
+        auto_approve=True,
+    )
+
+    repo = ReminderRepository(session)
+    now = datetime.now(timezone.utc)
+
+    created = await repo.create(
+        user_id=user.id,
+        text="call mom",
+        schedule_text="in 1 second",
+        schedule_type="once",
+        next_run_at=now - timedelta(seconds=1),
+    )
+    await session.commit()
+
+    send_message = AsyncMock()
+    delivered = await deliver_due_reminders(
+        session=session,
+        send_message=send_message,
+        now=now,
+        user_id=user.id,
+    )
+    await session.commit()
+
+    assert delivered == 1
+    send_message.assert_awaited()
+
+    refreshed = await repo.get_by_id(reminder_id=created.id, user_id=user.id)
+    assert refreshed is not None
+    assert refreshed.is_active is False
+    assert refreshed.next_run_at is None
+
+
+async def test_deliver_due_daily_reminder_advances_next_run(session):
+    user_repo = UserRepository(session)
+    user, _ = await user_repo.get_or_create(
+        telegram_id=999102,
+        username="reminder_daily",
+        first_name="Reminder",
+        auto_approve=True,
+    )
+
+    repo = ReminderRepository(session)
+    now = datetime.now(timezone.utc)
+
+    created = await repo.create(
+        user_id=user.id,
+        text="drink water",
+        schedule_text="daily",
+        schedule_type="daily",
+        next_run_at=now - timedelta(days=2),
+    )
+    await session.commit()
+
+    send_message = AsyncMock()
+    delivered = await deliver_due_reminders(
+        session=session,
+        send_message=send_message,
+        now=now,
+        user_id=user.id,
+    )
+    await session.commit()
+
+    assert delivered == 1
+
+    refreshed = await repo.get_by_id(reminder_id=created.id, user_id=user.id)
+    assert refreshed is not None
+    assert refreshed.is_active is True
+    assert refreshed.next_run_at is not None
+    assert refreshed.next_run_at > now

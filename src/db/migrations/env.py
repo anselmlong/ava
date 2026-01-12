@@ -1,10 +1,12 @@
 """Alembic migration environment."""
 
 import asyncio
+import logging
 from logging.config import fileConfig
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
@@ -66,10 +68,32 @@ async def run_async_migrations() -> None:
         poolclass=pool.NullPool,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
+    logger = logging.getLogger("alembic.env")
+    try:
+        async with connectable.connect() as connection:
+            await connection.run_sync(do_run_migrations)
+    except OSError as e:
+        if e.errno == 101:  # Network is unreachable
+            url_str = config.get_main_option("sqlalchemy.url")
+            if url_str:
+                url = make_url(url_str)
+                logger.error(
+                    "Network is unreachable connecting to PostgreSQL host=%s port=%s db=%s. "
+                    "If you're using Supabase, the direct db.<project>.supabase.co endpoint may be IPv6-only; "
+                    "use the Supabase pooler (IPv4) endpoint or enable IPv6 in Docker/host networking.",
+                    url.host or "<unknown>",
+                    url.port or "<unknown>",
+                    url.database or "<unknown>",
+                )
+            else:
+                logger.error(
+                    "Network is unreachable connecting to PostgreSQL. "
+                    "If you're using Supabase, the direct db.<project>.supabase.co endpoint may be IPv6-only; "
+                    "use the Supabase pooler (IPv4) endpoint or enable IPv6 in Docker/host networking."
+                )
+        raise
+    finally:
+        await connectable.dispose()
 
 
 def run_migrations_online() -> None:

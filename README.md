@@ -44,6 +44,8 @@ An agentic AI Telegram bot built with LangGraph, PostgreSQL (pgvector), and Goog
    ```bash
    cp .env.example .env
    # Edit .env with your credentials
+   # Note: When using Docker Compose `env_file`, do not put inline comments after values.
+   # Use full-line comments starting with `#`.
    ```
 
 5. **Start the database services**
@@ -55,6 +57,10 @@ An agentic AI Telegram bot built with LangGraph, PostgreSQL (pgvector), and Goog
    ```bash
    alembic upgrade head
    ```
+
+   If you run migrations inside Docker (e.g. `docker compose run --rm bot alembic upgrade head`), set `DATABASE_URL` to use `postgres` (not `localhost`) and `REDIS_URL` to use `redis`.
+
+   If `DATABASE_URL` points at Supabase and you see `OSError: [Errno 101] Network is unreachable`, the Supabase `db.<project>.supabase.co` endpoint may be IPv6-only; use Supabase's pooler (IPv4) connection string or enable IPv6 in your Docker/host network.
 
 7. **Start the bot**
    ```bash
@@ -128,6 +134,8 @@ mypy src
    ```bash
    cp .env.example .env
    # Edit .env with your credentials
+   # Note: When using Docker Compose `env_file`, do not put inline comments after values.
+   # Use full-line comments starting with `#`.
    ```
 
 5. **Start the database services**

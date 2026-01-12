@@ -2,8 +2,8 @@
 ## Technical Specification Document
 
 **Version:** 1.0  
-**Last Updated:** January 10, 2026  
-**Status:** Planning Phase
+**Last Updated:** January 12, 2026  
+**Status:** Active Development
 
 ---
 
@@ -1183,6 +1183,14 @@ where:
 
 ## 11. Implementation Roadmap
 
+### 11.0 Current Status (As Implemented)
+
+As of January 12, 2026, the repository includes working or in-progress implementations for:
+- **Phase 1 (Foundation)**: project structure, Docker Compose, core database schema/migrations, basic Telegram bot loop, user approval workflow
+- **Phase 2 (Memory System)**: pgvector-backed semantic memory foundations (schema + retrieval plumbing)
+- **Goal + reminder tracking MVP**: goal tracking and reminder tracking features in place
+- **Production readiness improvements**: production prep work and Docker image size reductions
+
 ### Phase 1: Foundation (Week 1)
 - Project structure, Docker Compose
 - Database schema (users, conversations)
@@ -1332,6 +1340,10 @@ GOOGLE_SEARCH_API_KEY=required
 SECRET_KEY=required
 ```
 
+**Formatting Notes:**
+- When using Docker Compose `env_file`, avoid inline comments after values (e.g. `KEY=value # comment`). Prefer full-line comments starting with `#`.
+- When running inside Docker Compose, service-to-service hosts should use Compose service names (e.g. `postgres`, `redis`) rather than `localhost`.
+
 ### 14.2 Database Migrations
 
 ```bash
@@ -1344,6 +1356,10 @@ poetry run alembic upgrade head
 # Rollback
 poetry run alembic downgrade -1
 ```
+
+**Notes:**
+- If you run migrations inside Docker (e.g. `docker compose run --rm bot poetry run alembic upgrade head`), set `DATABASE_URL` to use `postgres` (not `localhost`) and `REDIS_URL` to use `redis`.
+- If `DATABASE_URL` points at Supabase and you see `OSError: [Errno 101] Network is unreachable`, the direct `db.<project>.supabase.co` endpoint may be IPv6-only; use Supabase's pooler (IPv4) connection string or enable IPv6 in your Docker/host network. Alembic logs a more actionable message for this case in `src/db/migrations/env.py`.
 
 ---
 
@@ -1358,5 +1374,5 @@ poetry run alembic downgrade -1
 ---
 
 **Document Version:** 1.0  
-**Last Updated:** January 10, 2026  
-**Status:** Ready for Implementation
+**Last Updated:** January 12, 2026  
+**Status:** Active Development

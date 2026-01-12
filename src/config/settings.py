@@ -82,11 +82,36 @@ class Settings(BaseSettings):
     rate_limit_messages_per_minute: int = 30
     rate_limit_enabled: bool = True
 
+    # Reminders
+    reminder_poll_interval_seconds: int = 30
+    reminder_dispatch_batch_size: int = 50
+
     # Security
     secret_key: str = Field(
         default="dev-secret-key-change-in-production-min-32-chars",
         description="Secret key for encryption (min 32 chars)",
     )
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, v: str) -> str:
+        """Normalize DATABASE_URL for SQLAlchemy asyncio.
+
+        SQLAlchemy's asyncio engine requires an async driver (asyncpg). It's
+        common for Postgres URLs to be provided as `postgresql://...` or
+        `postgres://...`, so we rewrite those to `postgresql+asyncpg://...`.
+        """
+
+        if v.startswith("postgres://"):
+            v = "postgresql://" + v[len("postgres://") :]
+
+        if v.startswith("postgresql+psycopg2://"):
+            return v.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+
+        if v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        return v
 
     @field_validator("secret_key")
     @classmethod

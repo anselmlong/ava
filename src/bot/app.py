@@ -1,10 +1,12 @@
 """Main Telegram bot application."""
 
-from telegram.ext import Application
+from telegram.ext import Application, ContextTypes
+
+from src.services.reminder_delivery import deliver_due_reminders
 
 from src.config.settings import settings
 from src.config.logging import get_logger, setup_logging
-from src.db import init_db, close_db
+from src.db import init_db, close_db, get_session
 from src.bot.handlers import (
     start_handler,
     help_handler,
@@ -24,11 +26,39 @@ from src.bot.handlers import (
 logger = get_logger(__name__)
 
 
+async def _reminder_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with get_session() as session:
+        delivered = await deliver_due_reminders(
+            session=session,
+            send_message=lambda chat_id, text: context.bot.send_message(
+                chat_id=chat_id, text=text
+            ),
+            batch_size=settings.reminder_dispatch_batch_size,
+        )
+
+    if delivered:
+        logger.info("Delivered reminders", count=delivered)
+
+
 async def post_init(application: Application) -> None:
     """Initialize resources after the bot starts."""
     logger.info("Initializing database connection...")
     await init_db()
     logger.info("Database initialized")
+
+    if application.job_queue:
+        application.job_queue.run_repeating(
+            _reminder_dispatch_job,
+            interval=settings.reminder_poll_interval_seconds,
+            first=5,
+            name="reminder-dispatch",
+        )
+        logger.info(
+            "Scheduled reminder dispatcher",
+            interval_seconds=settings.reminder_poll_interval_seconds,
+        )
+    else:
+        logger.warning("JobQueue not available; reminders will not be dispatched")
 
 
 async def post_shutdown(application: Application) -> None:
