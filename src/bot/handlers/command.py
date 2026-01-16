@@ -1,9 +1,24 @@
 """Command handlers for the Telegram bot."""
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
 
 from src.config.settings import settings
+
+
+def _format_dt_for_user(dt_utc: datetime, user_timezone: str) -> str:
+    """Format a UTC datetime in the user's local timezone."""
+    try:
+        tz = ZoneInfo(user_timezone)
+        local = dt_utc.astimezone(tz)
+        return local.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return dt_utc.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
 from src.config.logging import get_logger
 from src.bot.markdown import reply_markdown, send_markdown
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -347,9 +362,10 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         reminder = result.reminder
         if reminder and reminder.next_run_at:
+            when = _format_dt_for_user(reminder.next_run_at, user.timezone)
             await reply_markdown(
                 update.message,
-                f"✅ ok. reminder saved for {reminder.next_run_at.strftime('%Y-%m-%d %H:%M UTC')}: {reminder.text}",
+                f"✅ ok. reminder saved for {when}: {reminder.text}",
             )
         else:
             await reply_markdown(update.message, "✅ ok. reminder saved.")
@@ -379,7 +395,7 @@ async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         for reminder in reminders[:20]:
             status = "active" if reminder.is_active else "inactive"
             when = (
-                reminder.next_run_at.strftime("%Y-%m-%d %H:%M UTC")
+                _format_dt_for_user(reminder.next_run_at, user.timezone)
                 if reminder.next_run_at
                 else "(unscheduled)"
             )

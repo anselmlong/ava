@@ -14,7 +14,7 @@ from src.db.repositories.user import UserRepository
 from src.db.repositories.conversation import ConversationRepository
 from src.db.models import UserStatus, MessageRole
 from src.services.llm.gemini import get_gemini_service
-from src.services.memory import MemoryService
+from src.services.mem0_service import get_mem0_service
 
 logger = get_logger(__name__)
 
@@ -190,37 +190,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             history = history[:-1] if history else []
 
             memory_enabled_for_user = user.conversation_retention_days > 0
-            memory_service: MemoryService | None = None
-
-            # Opportunistic memory retention cleanup (max once/day per user)
-            if settings.memory_write_enabled and memory_enabled_for_user:
-                try:
-                    last_cleanup_raw = (user.preferences or {}).get(
-                        "memory_last_cleanup_at"
-                    )
-                    last_cleanup = None
-                    if isinstance(last_cleanup_raw, str):
-                        last_cleanup = _parse_iso_datetime(last_cleanup_raw)
-
-                    should_cleanup = last_cleanup is None or (
-                        now - last_cleanup
-                    ) > timedelta(days=1)
-                    if should_cleanup:
-                        memory_service = MemoryService(session)
-                        await memory_service.delete_old_memories(
-                            user_id=user.id,
-                            retention_days=user.conversation_retention_days,
-                        )
-                        user.preferences = {
-                            **(user.preferences or {}),
-                            "memory_last_cleanup_at": now.isoformat(),
-                        }
-                except Exception as e:
-                    logger.warning(
-                        "Memory cleanup failed",
-                        telegram_id=telegram_user.id,
-                        error=str(e),
-                    )
 
             response_text: str
             decision_trace: list[str] = []
@@ -240,22 +209,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
             else:
                 decision_trace.append("route:direct")
-                # Optional long-term memory retrieval
+                # Optional long-term memory retrieval via Mem0
                 memory_context = ""
                 if settings.memory_read_enabled and memory_enabled_for_user:
                     try:
-                        memory_service = memory_service or MemoryService(session)
-                        recent_user_messages = [
-                            msg["content"]
-                            for msg in history
-                            if msg.get("role") == "user"
-                        ] + [message_text]
-                        memory_context = (
-                            await memory_service.get_context_for_conversation(
-                                user_id=user.id,
-                                recent_messages=recent_user_messages,
-                                max_memories=settings.memory_retrieval_top_k,
-                            )
+                        mem0 = get_mem0_service()
+                        memory_context = mem0.get_context(
+                            user_id=user.id,
+                            query=message_text,
+                            limit=settings.memory_retrieval_top_k,
                         )
                         decision_trace.append(
                             "memory:used" if memory_context else "memory:none"
@@ -313,24 +275,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     },
                 )
 
-            # Optional long-term memory writing
+            # Optional long-term memory writing via Mem0
             if (
                 (not settings.langgraph_agent_enabled)
                 and settings.memory_write_enabled
                 and memory_enabled_for_user
             ):
                 try:
-                    memory_service = memory_service or MemoryService(session)
-                    user_excerpt = _truncate_for_memory(message_text, 1500)
-                    assistant_excerpt = _truncate_for_memory(response_text, 1500)
-                    conversation_text = (
-                        f"User: {user_excerpt}\nAssistant: {assistant_excerpt}"
-                    )
-                    await memory_service.extract_and_store_facts(
-                        user_id=user.id,
-                        conversation_text=conversation_text,
-                        conversation_id=conversation.id,
-                    )
+                    mem0 = get_mem0_service()
+                    messages = [
+                        {"role": "user", "content": _truncate_for_memory(message_text, 1500)},
+                        {"role": "assistant", "content": _truncate_for_memory(response_text, 1500)},
+                    ]
+                    mem0.store_conversation(user_id=user.id, messages=messages)
                 except Exception as e:
                     logger.warning(
                         "Memory write failed",

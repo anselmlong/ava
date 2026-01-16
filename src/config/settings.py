@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     )
     debug: bool = False
     log_level: str = "INFO"
+    default_timezone: str = Field(
+        default="Asia/Singapore",
+        description="Default timezone for new users (IANA timezone name)",
+    )
 
     # Telegram
     telegram_bot_token: str = Field(default="", description="Telegram Bot API token")
@@ -39,6 +43,22 @@ class Settings(BaseSettings):
         return [
             int(id.strip()) for id in self.telegram_admin_ids.split(",") if id.strip()
         ]
+
+    @property
+    def db_components(self) -> dict:
+        """Parse database URL into components for Mem0 configuration."""
+        from urllib.parse import urlparse
+
+        # Remove async driver prefix for parsing
+        url = self.database_url.replace("postgresql+asyncpg://", "postgresql://")
+        parsed = urlparse(url)
+        return {
+            "host": parsed.hostname or "localhost",
+            "port": parsed.port or 5432,
+            "user": parsed.username or "ava",
+            "password": parsed.password or "",
+            "dbname": parsed.path.lstrip("/") or "ava",
+        }
 
     # Database
     database_url: str = Field(
@@ -69,14 +89,20 @@ class Settings(BaseSettings):
     # Agent
     langgraph_agent_enabled: bool = False
 
-    # Memory System
+    # Memory System (Mem0)
     memory_read_enabled: bool = True
     memory_write_enabled: bool = True
     memory_retrieval_top_k: int = 5  # Number of memories to retrieve
-    memory_similarity_threshold: float = 0.7  # Minimum similarity for retrieval
-    memory_recency_weight: float = 0.1  # Weight for recency in scoring
-    memory_importance_weight: float = 0.2  # Weight for importance in scoring
-    memory_consolidation_similarity: float = 0.9  # Threshold for consolidation
+
+    # Neo4j Graph Memory
+    mem0_graph_enabled: bool = Field(
+        default=True, description="Enable Neo4j graph memory for entity relationships"
+    )
+    mem0_neo4j_url: str = Field(
+        default="bolt://localhost:7687", description="Neo4j Bolt connection URL"
+    )
+    mem0_neo4j_username: str = Field(default="neo4j", description="Neo4j username")
+    mem0_neo4j_password: str = Field(default="", description="Neo4j password")
 
     # Rate limiting (per user)
     rate_limit_messages_per_minute: int = 30

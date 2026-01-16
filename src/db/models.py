@@ -96,7 +96,7 @@ class User(Base):
     first_name: Mapped[Optional[str]] = mapped_column(String(255))
     last_name: Mapped[Optional[str]] = mapped_column(String(255))
     language_code: Mapped[Optional[str]] = mapped_column(String(10))
-    timezone: Mapped[str] = mapped_column(String(50), default="UTC")
+    timezone: Mapped[str] = mapped_column(String(50), default="Asia/Singapore")
 
     # Access control
     status: Mapped[str] = mapped_column(

@@ -24,7 +24,7 @@ from src.db.repositories.reminder import ReminderRepository
 from src.db.repositories.user import UserRepository
 from src.services.goals import GoalService
 from src.services.llm.gemini import get_gemini_service
-from src.services.memory import MemoryService
+from src.services.mem0_service import get_mem0_service
 from src.services.reminders import ReminderService
 
 logger = get_logger(__name__)
@@ -100,7 +100,7 @@ async def _load_context_node(state: AgentState) -> dict:
 
     user_repo = UserRepository(state["session"])
     user = await user_repo.get_by_id(state["user_id"])
-    user_timezone = user.timezone if user else "UTC"
+    user_timezone = user.timezone if user else settings.default_timezone
 
     pending_action = conversation_context.get("pending_action")
     if pending_action:
@@ -145,15 +145,11 @@ async def _retrieve_memory_node(state: AgentState) -> dict:
         return {"memory_context": "", "decision_trace": trace}
 
     try:
-        memory_service = MemoryService(state["session"])
-        recent_user_messages = [
-            msg["content"] for msg in state["history"] if msg.get("role") == "user"
-        ] + [state["message_text"]]
-
-        memory_context = await memory_service.get_context_for_conversation(
+        mem0 = get_mem0_service()
+        memory_context = mem0.get_context(
             user_id=state["user_id"],
-            recent_messages=recent_user_messages,
-            max_memories=settings.memory_retrieval_top_k,
+            query=state["message_text"],
+            limit=settings.memory_retrieval_top_k,
         )
 
         trace.append("memory:used" if memory_context else "memory:none")
@@ -200,16 +196,12 @@ async def _write_memory_node(state: AgentState) -> dict:
         return {"decision_trace": trace}
 
     try:
-        memory_service = MemoryService(state["session"])
-        user_excerpt = _truncate_for_memory(state["message_text"], 1500)
-        assistant_excerpt = _truncate_for_memory(state.get("response_text", ""), 1500)
-        conversation_text = f"User: {user_excerpt}\nAssistant: {assistant_excerpt}"
-
-        await memory_service.extract_and_store_facts(
-            user_id=state["user_id"],
-            conversation_text=conversation_text,
-            conversation_id=state["conversation_id"],
-        )
+        mem0 = get_mem0_service()
+        messages = [
+            {"role": "user", "content": _truncate_for_memory(state["message_text"], 1500)},
+            {"role": "assistant", "content": _truncate_for_memory(state.get("response_text", ""), 1500)},
+        ]
+        mem0.store_conversation(user_id=state["user_id"], messages=messages)
         trace.append("memory_write:ok")
     except Exception as exc:
         logger.warning(
@@ -266,7 +258,7 @@ async def _create_reminder_node(state: AgentState) -> dict:
         user_id=state["user_id"],
         conversation_id=state["conversation_id"],
         message_text=state["message_text"],
-        user_timezone=state.get("user_timezone") or "UTC",
+        user_timezone=state.get("user_timezone") or settings.default_timezone,
     )
 
     trace.append("tool:reminder:create")
@@ -277,7 +269,7 @@ async def _create_reminder_node(state: AgentState) -> dict:
     reminder = result.reminder
     if reminder and reminder.next_run_at:
         when = _format_dt_for_user(
-            reminder.next_run_at, state.get("user_timezone") or "UTC"
+            reminder.next_run_at, state.get("user_timezone") or settings.default_timezone
         )
         return {
             "response_text": f"✅ ok. i’ll remind you ({when}) to: {reminder.text}",
@@ -302,7 +294,7 @@ async def _reminder_time_followup_node(state: AgentState) -> dict:
         user_id=state["user_id"],
         conversation_id=state["conversation_id"],
         message_text=state["message_text"],
-        user_timezone=state.get("user_timezone") or "UTC",
+        user_timezone=state.get("user_timezone") or settings.default_timezone,
         draft=draft,
     )
 
@@ -314,7 +306,7 @@ async def _reminder_time_followup_node(state: AgentState) -> dict:
     reminder = result.reminder
     if reminder and reminder.next_run_at:
         when = _format_dt_for_user(
-            reminder.next_run_at, state.get("user_timezone") or "UTC"
+            reminder.next_run_at, state.get("user_timezone") or settings.default_timezone
         )
         return {
             "response_text": f"✅ ok. i’ll remind you ({when}) to: {reminder.text}",
@@ -344,7 +336,7 @@ async def _list_reminders_node(state: AgentState) -> dict:
     for reminder in reminders[:20]:
         when = (
             _format_dt_for_user(
-                reminder.next_run_at, state.get("user_timezone") or "UTC"
+                reminder.next_run_at, state.get("user_timezone") or settings.default_timezone
             )
             if reminder.next_run_at
             else "(unscheduled)"
@@ -432,7 +424,7 @@ async def run_agent_turn(
                 "intent": "conversation",
                 "route": "conversation",
                 "decision_trace": [],
-                "user_timezone": "UTC",
+                "user_timezone": settings.default_timezone,
                 "conversation_context": {},
                 "memory_enabled": memory_enabled,
                 "memory_context": "",

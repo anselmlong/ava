@@ -1,14 +1,12 @@
 """Services module."""
 
-from src.services.embedding import EmbeddingService, get_embedding_service
-from src.services.memory import MemoryService
+from src.services.mem0_service import Mem0Service, get_mem0_service
 from src.services.goals import GoalService
 from src.services.reminders import ReminderService
 
 __all__ = [
-    "EmbeddingService",
-    "get_embedding_service",
-    "MemoryService",
+    "Mem0Service",
+    "get_mem0_service",
     "GoalService",
     "ReminderService",
 ]
