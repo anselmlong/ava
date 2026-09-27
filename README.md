@@ -1,6 +1,6 @@
 # Ava - Your AI Personal Assistant
 
-[![Ava launch video](docs/launch.jpg)](docs/launch.mp4?raw=true)
+[![Ava launch video](docs/launch.jpg)](https://anselmlong.com/videos/launch/ava.mp4)
 
 <sub>▶ 20-second launch video (click to play)</sub>
 
