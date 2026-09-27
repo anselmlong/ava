@@ -1,5 +1,8 @@
 # Ava - Your AI Personal Assistant
 
+> [!NOTE]
+> **This project is superseded.** It was a work in progress: my first attempt at a personal agent, built from scratch with LangGraph, pgvector and Gemini. Ava now runs on [Hermes Agent](https://github.com/NousResearch/hermes-agent) with Telegram, GitHub and Vercel, and this repo is no longer maintained. I wrote about the current setup here: [Ava: How I Code Now (Mostly From Telegram)](https://anselmlong.com/blog/ava).
+
 An agentic AI Telegram bot built with LangGraph, PostgreSQL (pgvector), and Google Gemini. Ava helps users with natural conversations, goal tracking, task automation, and more.
 
 ## Features
