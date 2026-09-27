@@ -1,5 +1,9 @@
 # Ava - Your AI Personal Assistant
 
+[![Ava launch video](docs/launch.jpg)](docs/launch.mp4)
+
+<sub>▶ 20-second launch video (click to play)</sub>
+
 An agentic AI Telegram bot built with LangGraph, PostgreSQL (pgvector), and Google Gemini. Ava helps users with natural conversations, goal tracking, task automation, and more.
 
 ## Features
